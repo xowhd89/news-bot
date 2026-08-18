@@ -17,7 +17,7 @@ st.markdown(hide_st_style, unsafe_allow_html=True)
 st.title("Gemini")
 
 # 본인의 API 키로 반드시 교체하십시오
-GEMINI_API_KEY = "AQ.key"
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 def fetch_kbo_data():
     news_text = ""
