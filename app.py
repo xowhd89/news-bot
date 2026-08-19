@@ -24,7 +24,7 @@ def fetch_kbo_data():
     record_text = ""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
-    # [뉴스] 구글 뉴스 RSS (차단 없음)
+    # [뉴스] 구글 뉴스 RSS (차단 없는 안전한 수집처)
     try:
         url = "https://news.google.com/rss/search?q=KBO+프로야구+when:1d&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, headers=headers, timeout=10)
@@ -36,18 +36,19 @@ def fetch_kbo_data():
     except Exception as e:
         news_text = "뉴스 수집 실패"
 
-    # [순위] KBO 공식 홈페이지 데이터 직접 추출
+    # [순위] '우회 프록시 서버'를 통해 KBO 공식 홈페이지 데이터 추출 (차단 원천 방지)
     try:
-        record_url = "https://www.koreabaseball.com/TeamRank/TeamRank.aspx"
-        res_record = requests.get(record_url, headers=headers, timeout=10)
+        # api.allorigins.win 프록시를 거쳐 KBO 사이트에 우회 접속합니다.
+        proxy_url = "https://api.allorigins.win/raw?url=https://www.koreabaseball.com/TeamRank/TeamRank.aspx"
+        res_record = requests.get(proxy_url, headers=headers, timeout=15)
         soup = BeautifulSoup(res_record.text, 'html.parser')
         table = soup.find('table', {'class': 'tData'})
         if table:
             record_text = table.get_text(separator=' ', strip=True)
         else:
-            record_text = "순위 수집 차단됨"
+            record_text = "순위 수집 실패"
     except:
-        record_text = "순위 수집 차단됨"
+        record_text = "순위 수집 실패"
         
     return news_text, record_text
 
@@ -59,21 +60,21 @@ with st.spinner("가장 핫한 당일 KBO 뉴스를 분석하고 있습니다...
         st.error("데이터를 읽어오지 못했습니다. 새로고침을 시도해 주세요.")
     else:
         try:
+            # 3.6-flash 대신 가장 안정적인 최신 기본 모델 사용
             client = genai.Client(api_key=GEMINI_API_KEY)
             
-            # 지시문 대폭 수정: 순위 첫배치, 거짓말 금지, 요약 3줄
             ai_prompt = f"""
             당신은 전문적인 스포츠 애널리스트입니다. 어떠한 이모지도 절대 사용하지 마십시오. 
-            아래 제공된 당일 KBO 뉴스 데이터를 분석하여 매우 건조하고 전문적인 문서 형식으로 응답을 작성하십시오.
+            아래 제공된 당일 KBO 데이터를 바탕으로 건조하고 전문적인 리포트를 작성하십시오.
             
             [섹션 1: 현재 KBO 구단 순위]
             제공된 [순위 원시 데이터]를 바탕으로 1위부터 10위까지 순위표를 가장 먼저 작성하십시오.
-            표의 열은 [순위 / 구단명 / 승률 / 게임차] 4가지만 정확히 표시하십시오.
-            (주의: 데이터가 '순위 수집 차단됨'일 경우, 절대 엉터리로 순위표를 지어내거나 유추하지 말고 "현재 해외 서버 정책으로 인해 실시간 순위표를 가져올 수 없습니다." 라고만 출력하십시오.)
+            표의 열은 [순위 / 구단명 / 승률 / 게임차] 4가지만 표시하십시오.
             
-            [섹션 2: 주요 뉴스 상세 요약]
-            제공된 30개의 기사를 분석하여 핵심 이슈들을 묶어서 요약하십시오.
-            단순히 1줄로 짧게 요약하지 말고, 수집된 기사 제목들을 바탕으로 해당 이슈의 상황과 맥락을 '약 3줄 분량'으로 상세하고 깊이 있게 서술하십시오. (단, 정보가 부족한 기사는 억지로 3줄로 늘리지 마십시오.)
+            [섹션 2: 주요 뉴스 종합 요약 (최대한 많이 다룰 것)]
+            제공된 30개의 기사를 분석하여 주요 이슈를 뽑아내십시오.
+            단, 4~5개로 너무 압축하지 말고, 사소한 기사라도 버리지 말고 **최소 10개 이상, 최대한 많은 이슈**를 뽑아서 나열하십시오.
+            내용이 길어지면 안 됩니다. 각 이슈에 대한 설명은 **정확히 1~2줄 분량**으로 간결하게 핵심만 요약하십시오.
             (중요) 각 이슈의 제목에는 관련된 원문 링크를 마크다운 양식으로 걸어주세요.
             
             [섹션 3: 구단별 동향 정리]
@@ -88,7 +89,7 @@ with st.spinner("가장 핫한 당일 KBO 뉴스를 분석하고 있습니다...
             """
             
             res = client.models.generate_content(
-                model='gemini-3.6-flash',
+                model='gemini-1.5-flash',
                 contents=ai_prompt,
             )
             
