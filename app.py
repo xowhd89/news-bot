@@ -1,9 +1,10 @@
 import streamlit as st
 import requests
+from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 from google import genai
 
-# 1. 화면 위장 설정
+# 1. 화면 설정
 st.set_page_config(page_title="Gemini", layout="centered")
 hide_st_style = """
             <style>
@@ -21,61 +22,67 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 def fetch_kbo_data():
     news_text = ""
     record_text = ""
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
-    # ---------------------------------------------------------
-    # [수집처 변경 1] 네이버 대신 차단 없는 구글 뉴스 RSS 사용
-    # 구글 뉴스에서 'KBO 프로야구' 검색 결과를 RSS로 가져옵니다.
-    # ---------------------------------------------------------
+    # [뉴스] 구글 뉴스 RSS (차단 없음)
     try:
         url = "https://news.google.com/rss/search?q=KBO+프로야구+when:1d&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, headers=headers, timeout=10)
         root = ET.fromstring(res.text)
-        
-        # 상위 30개 기사 추출
         for i, item in enumerate(root.findall('.//item')[:30]):
             title = item.find('title').text
             link = item.find('link').text
             news_text += f"{i+1}. 제목: {title}\n링크: {link}\n\n"
     except Exception as e:
-        print(f"뉴스 수집 오류: {e}")
-        pass
+        news_text = "뉴스 수집 실패"
 
-    # ---------------------------------------------------------
-    # [수집처 변경 2] 나무위키 KBO 리그 문서에서 순위 정보 가져오기 시도
-    # KBO 공식 사이트도 차단될 수 있으므로 AI가 분석할 수 있도록 
-    # 뉴스 기사 텍스트를 통해 순위 동향을 파악하도록 유도합니다.
-    # ---------------------------------------------------------
-    record_text = "순위 정보는 실시간 뉴스 내용을 바탕으로 분석해 주세요."
+    # [순위] KBO 공식 홈페이지 데이터 직접 추출
+    try:
+        record_url = "https://www.koreabaseball.com/TeamRank/TeamRank.aspx"
+        res_record = requests.get(record_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(res_record.text, 'html.parser')
+        table = soup.find('table', {'class': 'tData'})
+        if table:
+            record_text = table.get_text(separator=' ', strip=True)
+        else:
+            record_text = "순위 수집 차단됨"
+    except:
+        record_text = "순위 수집 차단됨"
         
     return news_text, record_text
 
-# 화면 구동 시 자동 분석 실행
+# 앱 실행 시 자동 분석
 with st.spinner("가장 핫한 당일 KBO 뉴스를 분석하고 있습니다..."):
     raw_news, raw_record = fetch_kbo_data()
     
-    if not raw_news.strip():
-        st.error("데이터를 읽어오지 못했습니다. 잠시 후 다시 시도해 주세요.")
+    if not raw_news.strip() or "뉴스 수집 실패" in raw_news:
+        st.error("데이터를 읽어오지 못했습니다. 새로고침을 시도해 주세요.")
     else:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             
+            # 지시문 대폭 수정: 순위 첫배치, 거짓말 금지, 요약 3줄
             ai_prompt = f"""
             당신은 전문적인 스포츠 애널리스트입니다. 어떠한 이모지도 절대 사용하지 마십시오. 
             아래 제공된 당일 KBO 뉴스 데이터를 분석하여 매우 건조하고 전문적인 문서 형식으로 응답을 작성하십시오.
             
-            [섹션 1: 주요 이슈 종합 요약]
-            제공된 30개의 기사를 모두 분석하여, 주제가 겹치는 것은 하나로 묶어 중복을 제거하십시오.
-            기사에서 다루는 '모든 핵심 이슈를 빠짐없이' 분류하여 요약하십시오. (5개 제한 없이 모두 출력)
-            (중요) 각 이슈의 제목에는 제공된 원문 링크를 마크다운 양식으로 걸어주세요.
+            [섹션 1: 현재 KBO 구단 순위]
+            제공된 [순위 원시 데이터]를 바탕으로 1위부터 10위까지 순위표를 가장 먼저 작성하십시오.
+            표의 열은 [순위 / 구단명 / 승률 / 게임차] 4가지만 정확히 표시하십시오.
+            (주의: 데이터가 '순위 수집 차단됨'일 경우, 절대 엉터리로 순위표를 지어내거나 유추하지 말고 "현재 해외 서버 정책으로 인해 실시간 순위표를 가져올 수 없습니다." 라고만 출력하십시오.)
             
-            [섹션 2: 구단별 주요 동향]
-            제공된 30개의 기사를 분석하여, 언급된 각 구단별 이슈를 1~2줄로 빠짐없이 요약하십시오.
+            [섹션 2: 주요 뉴스 상세 요약]
+            제공된 30개의 기사를 분석하여 핵심 이슈들을 묶어서 요약하십시오.
+            단순히 1줄로 짧게 요약하지 말고, 수집된 기사 제목들을 바탕으로 해당 이슈의 상황과 맥락을 '약 3줄 분량'으로 상세하고 깊이 있게 서술하십시오. (단, 정보가 부족한 기사는 억지로 3줄로 늘리지 마십시오.)
+            (중요) 각 이슈의 제목에는 관련된 원문 링크를 마크다운 양식으로 걸어주세요.
             
-            [섹션 3: 현재 순위 동향 분석]
-            기사 제목과 내용들을 종합하여 현재 KBO 상위권, 중위권, 하위권 구단들의 순위 경쟁 상황을 3~4줄로 분석해 주십시오. (공식 순위표 수집이 차단되었으므로 기사 내용 기반으로 유추)
+            [섹션 3: 구단별 동향 정리]
+            제공된 기사를 분석하여, 언급된 각 구단별 이슈를 1~2줄로 빠짐없이 요약하십시오.
             
             데이터:
+            [순위 원시 데이터]
+            {raw_record}
+            
             [당일 뉴스 데이터 30개]
             {raw_news}
             """
