@@ -2,7 +2,9 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from google import genai
+import xml.etree.ElementTree as ET
 
+# 1. 화면 위장 설정
 st.set_page_config(page_title="Gemini", layout="centered")
 hide_st_style = """
             <style>
@@ -20,38 +22,28 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 def fetch_kbo_data():
     news_text = ""
     record_text = ""
-    news_list = []
+    headers = {"User-Agent": "Mozilla/5.0"}
     
-    # 봇 차단을 피하기 위해 실제 윈도우용 크롬 브라우저처럼 완벽히 위장
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Referer": "https://m.sports.naver.com/"
-    }
-    
+    # [우회 1] 네이버 대신 차단 없는 구글 뉴스(KBO 야구) 피드 사용
     try:
-        for page in range(1, 3):
-            url = f"https://sports.news.naver.com/kbaseball/news/list?isphoto=N&type=popular&page={page}"
-            res = requests.get(url, headers=headers, timeout=5)
-            if res.status_code == 200:
-                news_list.extend(res.json().get('list', []))
-            else:
-                st.error(f"네이버 서버 접근 차단 (상태 코드: {res.status_code})")
-    except Exception as e:
-        pass
-            
-    for i, news in enumerate(news_list[:30]):
-        title = news.get('title')
-        oid = news.get('oid')
-        aid = news.get('aid')
-        link = f"https://m.sports.naver.com/kbaseball/article/{oid}/{aid}"
-        news_text += f"{i+1}. 제목: {title}\n링크: {link}\n\n"
+        url = "https://news.google.com/rss/search?q=KBO+프로야구&hl=ko&gl=KR&ceid=KR:ko"
+        res = requests.get(url, headers=headers)
+        root = ET.fromstring(res.text)
         
-    record_url = "https://sports.news.naver.com/kbaseball/record/index"
+        # 상위 30개 기사 추출
+        for i, item in enumerate(root.findall('.//item')[:30]):
+            title = item.find('title').text
+            link = item.find('link').text
+            news_text += f"{i+1}. 제목: {title}\n링크: {link}\n\n"
+    except Exception as e:
+        st.error(f"뉴스 데이터 수집 실패: {e}")
+        
+    # [우회 2] 네이버 대신 KBO 공식 홈페이지에서 순위 추출
     try:
-        res_record = requests.get(record_url, headers=headers, timeout=5)
+        record_url = "https://www.koreabaseball.com/TeamRank/TeamRank.aspx"
+        res_record = requests.get(record_url, headers=headers)
         soup = BeautifulSoup(res_record.text, 'html.parser')
-        table = soup.find('table')
+        table = soup.find('table', {'class': 'tData'})
         if table:
             record_text = table.get_text(separator=' ', strip=True)
     except:
@@ -59,11 +51,12 @@ def fetch_kbo_data():
         
     return news_text, record_text
 
+# 앱 실행 시 자동으로 즉시 분석 및 출력
 with st.spinner("최신 KBO 데이터를 분석하고 있습니다..."):
     raw_news, raw_record = fetch_kbo_data()
     
     if not raw_news.strip():
-        st.error("데이터를 읽어오지 못했습니다. 네이버 서버에 의해 접근이 차단되었을 수 있습니다.")
+        st.error("데이터를 읽어오지 못했습니다.")
     else:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
