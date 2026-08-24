@@ -24,14 +24,12 @@ def fetch_baseball_data():
     record_text = ""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
-    # [데이터 1] KBO + MLB 코리안리거 실시간 뉴스 (구글 뉴스 RSS 우회)
+    # [데이터 1] KBO + MLB 코리안리거 실시간 뉴스 
     try:
-        # 검색어 확장: KBO 프로야구 및 코리안 메이저리거 관련 키워드
         url = "https://news.google.com/rss/search?q=(KBO OR 프로야구) OR (메이저리그 OR 코리안리거 OR 류현진 OR 김하성 OR 이정후 OR 샌디에이고 OR 샌프란시스코)+when:1d&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, headers=headers, timeout=10)
         root = ET.fromstring(res.text)
         
-        # 넉넉하게 50개의 기사를 수집하여 AI에게 넘김 (분석 풀 확보)
         for i, item in enumerate(root.findall('.//item')[:50]):
             title = item.find('title').text
             link = item.find('link').text
@@ -39,7 +37,7 @@ def fetch_baseball_data():
     except Exception as e:
         news_text = "뉴스 수집 실패"
 
-    # [데이터 2] KBO 순위표 (프록시 서버 우회 - 차단 원천 봉쇄)
+    # [데이터 2] KBO 순위표 
     try:
         proxy_url = "https://api.allorigins.win/raw?url=https://www.koreabaseball.com/TeamRank/TeamRank.aspx"
         res_record = requests.get(proxy_url, headers=headers, timeout=15)
@@ -62,21 +60,29 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
         st.error("데이터 통신에 실패했습니다. 화면을 새로고침 해 주십시오.")
     else:
         try:
-            # AI 모델 초기화
             client = genai.Client(api_key=GEMINI_API_KEY)
             
-            # [자동 모델 감지 로직] 사용 가능한 모델 목록을 검색하여 최적의 모델(flash 또는 pro)을 자동 선택
-            target_model = 'gemini-1.5-flash' # 기본 권장 모델
-            available_models = client.models.list_models()
-            model_names = [m.name for m in available_models if 'generateContent' in m.supported_generation_methods]
+            # [자동 모델 검색 및 할당 로직 완벽 복구]
+            target_model = 'gemini-1.5-flash' # 만약을 대비한 보험용 기본값
+            try:
+                available_models = []
+                # 최신 SDK 문법(.list)으로 사용 가능한 모델을 모두 훑어봄
+                for m in client.models.list():
+                    # generateContent(텍스트 생성) 기능을 지원하는 모델만 찾아내기
+                    if hasattr(m, 'supported_actions') and 'generateContent' in m.supported_actions:
+                        available_models.append(m.name)
+                
+                # 리스트 중에서 가장 빠르고 똑똑한 flash나 pro 모델을 찾아 자동 할당
+                for name in available_models:
+                    if 'gemini-1.5-flash' in name:
+                        target_model = name
+                        break
+                    elif 'gemini-pro' in name:
+                        target_model = name
+            except Exception as model_e:
+                # 모델 검색에 실패하더라도 에러 창을 띄우지 않고 기본값으로 조용히 넘어감
+                pass
             
-            # 'models/' 접두사가 붙는 경우와 안 붙는 경우를 모두 커버하여 안전하게 모델 지정
-            if any('gemini-1.5-flash' in name for name in model_names):
-                target_model = next(name for name in model_names if 'gemini-1.5-flash' in name)
-            elif any('gemini-pro' in name for name in model_names):
-                target_model = next(name for name in model_names if 'gemini-pro' in name)
-            
-            # 우리가 합의한 완벽한 4단 구조 프롬프트
             ai_prompt = f"""
             당신은 최고의 전문 스포츠 애널리스트입니다. 어떠한 이모지도 사용하지 마십시오. 
             아래 제공된 최신 야구 데이터를 바탕으로 건조하고 읽기 쉬운 리포트를 작성하십시오.
@@ -105,13 +111,12 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
             {raw_news}
             """
             
-            # 자동 감지된 모델을 사용하여 콘텐츠 생성
+            # 위에서 찾아낸 최적의 모델(target_model)을 자동으로 꽂아 넣음
             res = client.models.generate_content(
                 model=target_model,
                 contents=ai_prompt,
             )
             
-            # 깔끔하게 화면에 출력
             st.markdown(res.text)
             
         except Exception as e:
