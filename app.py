@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 from google import genai
+import re # 문자열 필터링을 위한 정규표현식 모듈 추가
 
 # 1. 화면 설정
 st.set_page_config(page_title="Gemini", layout="centered")
@@ -62,25 +63,22 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             
-            # [완벽하게 개선된 미래 대비용 자동 검색 로직]
-            target_model = 'gemini-1.5-flash' # 만약을 대비한 최후의 보루
+            target_model = 'gemini-1.5-flash' # 최후의 보험
             try:
                 flash_models = []
-                # 사용 가능한 모든 모델을 탐색
                 for m in client.models.list():
                     if hasattr(m, 'supported_actions') and 'generateContent' in m.supported_actions:
-                        # 1. 404 에러의 주범인 'models/' 텍스트를 깔끔하게 제거
                         clean_name = m.name.replace("models/", "")
-                        # 2. 요금 폭탄(429 에러)을 피하기 위해 'flash' 모델만 수집
-                        if 'flash' in clean_name.lower():
+                        
+                        # [핵심 수정] omni 같은 함정 모델을 피하기 위해 숫자 정식 버전(예: gemini-1.5-flash, gemini-2.0-flash)만 엄격하게 필터링
+                        if re.match(r"^gemini-\d+\.\d+-flash$", clean_name):
                             flash_models.append(clean_name)
                 
                 if flash_models:
-                    # 3. 이름(버전)을 내림차순 정렬하여 가장 높은 버전을 1순위로!
-                    flash_models.sort(reverse=True)
-                    target_model = flash_models[0]
+                    flash_models.sort(reverse=True) # 2.0, 1.5 순으로 정렬
+                    target_model = flash_models[0]  # 가장 높은 버전 선택
             except Exception:
-                pass # 탐색 실패 시에도 기본값으로 문제없이 넘어가게 처리
+                pass
             
             ai_prompt = f"""
             당신은 최고의 전문 스포츠 애널리스트입니다. 어떠한 이모지도 사용하지 마십시오. 
@@ -110,7 +108,6 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
             {raw_news}
             """
             
-            # 찾아낸 최적의 최신 모델을 투입
             res = client.models.generate_content(
                 model=target_model,
                 contents=ai_prompt,
