@@ -7,7 +7,7 @@ import re
 import time
 
 # 1. 화면 설정
-st.set_page_config(page_title="Gemini", layout="centered")
+st.set_page_config(page_title="⚾ KBO Daily Report", layout="centered")
 hide_st_style = """
             <style>
             #MainMenu {visibility: hidden;}
@@ -17,16 +17,16 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-st.title("Gemini")
+st.title("⚾ KBO & MLB 실시간 브리핑")
 
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 def fetch_baseball_data():
     news_text = ""
     record_text = ""
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
-    # [데이터 1] 뉴스 50개 넉넉히 수집 (풀을 넓혀야 중복 제거 후에도 남는 게 많음)
+    # [데이터 1] 뉴스 50개 수집
     try:
         url = "https://news.google.com/rss/search?q=(KBO OR 프로야구) OR (메이저리그 OR 코리안리거 OR 류현진 OR 김하성 OR 이정후 OR 샌디에이고 OR 샌프란시스코)+when:1d&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, headers=headers, timeout=10)
@@ -39,18 +39,15 @@ def fetch_baseball_data():
     except Exception as e:
         news_text = "뉴스 수집 실패"
 
-    # [데이터 2] KBO 순위표 수집처 변경 (네이버 통합검색 우회 활용)
+    # [데이터 2] KBO 순위표 수집 (네이버 통합검색 우회)
     try:
-        # 네이버에 'KBO 순위'를 검색한 결과 페이지를 요청
         rank_url = "https://search.naver.com/search.naver?where=nexearch&query=KBO+%EC%88%9C%EC%9C%84"
         res_record = requests.get(rank_url, headers=headers, timeout=10)
         soup = BeautifulSoup(res_record.text, 'html.parser')
         
-        # 검색 결과 중 테이블(table) 태그만 싹 뒤져서 순위표 데이터 추출
         tables = soup.find_all('table')
         for table in tables:
             text = table.get_text(separator=' ', strip=True)
-            # 승률과 게임차가 포함된 표가 바로 우리가 찾는 KBO 순위표!
             if "승률" in text and "게임차" in text:
                 record_text = text
                 break
@@ -88,24 +85,30 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
 
             ai_prompt = f"""
             당신은 최고의 전문 스포츠 애널리스트입니다. 어떠한 이모지도 사용하지 마십시오. 
-            아래 제공된 최신 야구 데이터를 바탕으로 건조하고 읽기 쉬운 리포트를 작성하십시오.
+            아래 제공된 최신 야구 데이터를 바탕으로 사용자가 읽기 쉽도록 가독성을 극대화하여 리포트를 작성하십시오.
             
             [섹션 1: 현재 KBO 구단 순위]
-            제공된 [순위 원시 데이터]를 바탕으로 1위부터 10위까지 순위표를 가장 먼저 작성하십시오.
-            표의 열은 [순위 / 구단명 / 승률 / 게임차] 4가지만 표시하십시오.
+            제공된 [순위 원시 데이터]를 바탕으로 1위부터 10위까지 순위표를 작성하십시오.
+            (중요) 반드시 마크다운 표(Table) 형식(`| 순위 | 구단명 | 승률 | 게임차 |`)을 사용하여 엑셀처럼 깔끔하게 출력하십시오.
             
             [섹션 2: KBO 데일리 브리핑 (전체 흐름 파악)]
-            수집된 기사들을 종합하여, 어제 경기 결과에 따른 순위 변동 상황과 오늘 KBO에서 주목해야 할 가장 큰 화두(큰 줄기)를 3~4줄로 굵직하게 요약하십시오.
+            어제 경기 결과에 따른 순위 변동 상황과 오늘 KBO에서 주목해야 할 가장 큰 화두를 요약하십시오.
+            (중요) 글이 답답해 보이지 않도록 문장과 문장 사이에 적절히 줄바꿈(엔터)을 넣어 가독성을 높이십시오.
             
             [섹션 3: 구단별 주요 동향 요약]
-            제공된 기사를 분석하여, 언급된 각 구단별 이슈를 찾아 구단당 1~2줄로 요약하십시오. (특정 구단에 대한 소식이 없다면 '특이 동향 없음'이라고 표기하십시오.)
+            각 구단별 이슈를 찾아 구단당 1~2줄로 요약하십시오.
+            (중요) 글머리 기호(Bullet points)를 사용하고, 각 구단 설명이 끝날 때마다 빈 줄(엔터 2번)을 넣어 항목 간 간격을 띄우십시오.
             
             [섹션 4: 실시간 주요 뉴스 하이라이트 (KBO & MLB)]
-            수집된 50개의 기사 데이터를 분석하여 영양가 높은 진짜 야구 이슈만 선별하십시오.
-            (중요) 같은 경기 결과나 동일한 사건을 다루는 **중복된 기사들은 완벽하게 하나로 통합하여 요약**하십시오. 중복된 내용이 리스트에 여러 번 나오면 안 됩니다.
-            중복을 제거하더라도, 10개 구단의 주요 소식과 메이저리거 동향을 샅샅이 찾아내어 **최소 12개에서 최대 15개의 '서로 다른' 핵심 이슈**를 리스트 형태로 나열하십시오.
-            각 이슈에 대한 설명은 **정확히 2줄 분량**으로 간결하고 디테일하게 요약하십시오.
-            각 이슈의 제목에는 관련된 원문 링크를 마크다운 양식으로 걸어주세요.
+            사용자가 "이 리포트 하나만 보면 오늘 야구 소식은 다 알 수 있다"고 확신할 수 있도록 누락 없이 꼼꼼하게 선별하십시오.
+            (중요) 기사가 중구난방으로 보이지 않도록 아래의 소제목(카테고리)으로 나누어서 정리하십시오:
+            - **[어제 경기 핵심 리뷰]**
+            - **[선수 부상 및 엔트리 동향]**
+            - **[기타 핫이슈 및 감독 코멘트]**
+            - **[MLB 코리안리거 활약상]**
+            
+            각 카테고리별로 관련 뉴스를 배치하되, 중복 기사는 하나로 묶어 총 15~20개 내외의 풍성한 이슈 리스트를 만드십시오.
+            각 이슈의 제목에는 관련된 원문 링크를 클릭할 수 있도록 마크다운 양식으로 걸어주고, 설명은 2줄 분량으로 상세히 적어주십시오.
             
             데이터:
             [순위 원시 데이터]
