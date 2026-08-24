@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 from google import genai
 
-# 1. 화면 설정 (앱처럼 보이도록 위장)
+# 1. 화면 설정
 st.set_page_config(page_title="Gemini", layout="centered")
 hide_st_style = """
             <style>
@@ -62,25 +62,20 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             
-            # [자동 모델 검색 및 할당 로직 완벽 복구]
-            target_model = 'gemini-1.5-flash' # 만약을 대비한 보험용 기본값
+            # [자동 모델 검색 수정] 무료로 넉넉히 쓸 수 있는 'flash' 모델만 찾도록 제한
+            target_model = 'gemini-1.5-flash'
             try:
                 available_models = []
-                # 최신 SDK 문법(.list)으로 사용 가능한 모델을 모두 훑어봄
                 for m in client.models.list():
-                    # generateContent(텍스트 생성) 기능을 지원하는 모델만 찾아내기
                     if hasattr(m, 'supported_actions') and 'generateContent' in m.supported_actions:
                         available_models.append(m.name)
                 
-                # 리스트 중에서 가장 빠르고 똑똑한 flash나 pro 모델을 찾아 자동 할당
+                # Pro 모델은 무료 API 키에서 막히므로 검색 조건에서 아예 제외합니다.
                 for name in available_models:
                     if 'gemini-1.5-flash' in name:
                         target_model = name
                         break
-                    elif 'gemini-pro' in name:
-                        target_model = name
             except Exception as model_e:
-                # 모델 검색에 실패하더라도 에러 창을 띄우지 않고 기본값으로 조용히 넘어감
                 pass
             
             ai_prompt = f"""
@@ -95,11 +90,11 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
             수집된 기사들을 종합하여, 어제 경기 결과에 따른 순위 변동 상황과 오늘 KBO에서 주목해야 할 가장 큰 화두(큰 줄기)를 3~4줄로 굵직하게 요약하십시오.
             
             [섹션 3: 구단별 주요 동향 요약]
-            제공된 기사를 분석하여, 언급된 각 구단별 이슈를 찾아 구단당 1~2줄로 요약하십시오. (만약 특정 구단에 대한 유의미한 소식이 없다면 억지로 지어내지 말고 '특이 동향 없음'이라고 표기하십시오.)
+            제공된 기사를 분석하여, 언급된 각 구단별 이슈를 찾아 구단당 1~2줄로 요약하십시오. (특정 구단에 대한 소식이 없다면 '특이 동향 없음'이라고 표기하십시오.)
             
             [섹션 4: 실시간 주요 뉴스 하이라이트 (KBO & MLB)]
-            수집된 50개의 기사 중 가십성 기사를 버리고 영양가 높은 진짜 야구 이슈(경기 결과, 순위 싸움, 부상, 콜업, 트레이드 등)만 선별하십시오.
-            국내 구단 소식과 더불어 코리안 메이저리거들의 활약상도 반드시 포함하여 **최소 12개 이상 최대한 많은 이슈**를 리스트 형태로 나열하십시오.
+            수집된 50개의 기사 중 영양가 높은 진짜 야구 이슈(경기 결과, 순위 싸움, 부상, 콜업, 트레이드 등)만 선별하십시오.
+            국내 구단 소식과 메이저리거들의 활약상도 반드시 포함하여 **최소 12개 이상 최대한 많은 이슈**를 리스트 형태로 나열하십시오.
             각 이슈에 대한 설명은 **정확히 2줄 분량**으로 간결하고 디테일하게 요약하십시오.
             (중요) 각 이슈의 제목에는 관련된 원문 링크를 클릭할 수 있도록 마크다운 양식으로 걸어주세요.
             
@@ -111,7 +106,6 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
             {raw_news}
             """
             
-            # 위에서 찾아낸 최적의 모델(target_model)을 자동으로 꽂아 넣음
             res = client.models.generate_content(
                 model=target_model,
                 contents=ai_prompt,
