@@ -3,8 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 from google import genai
-import re
-import time # 서버 지연 시 대기하기 위한 모듈 추가
+import time
 
 # 1. 화면 설정
 st.set_page_config(page_title="Gemini", layout="centered")
@@ -26,13 +25,13 @@ def fetch_baseball_data():
     record_text = ""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
-    # [데이터 1] KBO + MLB 뉴스 수집
+    # [데이터 1] KBO + MLB 뉴스 수집 (원활한 처리를 위해 40개로 최적화)
     try:
         url = "https://news.google.com/rss/search?q=(KBO OR 프로야구) OR (메이저리그 OR 코리안리거 OR 류현진 OR 김하성 OR 이정후 OR 샌디에이고 OR 샌프란시스코)+when:1d&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, headers=headers, timeout=10)
         root = ET.fromstring(res.text)
         
-        for i, item in enumerate(root.findall('.//item')[:50]):
+        for i, item in enumerate(root.findall('.//item')[:40]):
             title = item.find('title').text
             link = item.find('link').text
             news_text += f"{i+1}. 제목: {title}\n링크: {link}\n\n"
@@ -55,7 +54,7 @@ def fetch_baseball_data():
     return news_text, record_text
 
 # 앱 실행 시 자동 분석 시작
-with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니다... (서버 상태에 따라 최대 10초 소요)"):
+with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니다... (서버 상태에 따라 알아서 우회합니다)"):
     raw_news, raw_record = fetch_baseball_data()
     
     if not raw_news.strip() or "뉴스 수집 실패" in raw_news:
@@ -64,21 +63,22 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             
-            target_model = 'gemini-1.5-flash'
+            # [자동 모델 검색 완벽 복구] 무료 정식 'flash' 모델만 엄선해서 리스트업
+            flash_models = []
             try:
-                flash_models = []
                 for m in client.models.list():
-                    if hasattr(m, 'supported_actions') and 'generateContent' in m.supported_actions:
-                        clean_name = m.name.replace("models/", "")
-                        if re.match(r"^gemini-\d+\.\d+-flash$", clean_name):
-                            flash_models.append(clean_name)
-                
-                if flash_models:
-                    flash_models.sort(reverse=True)
-                    target_model = flash_models[0]
+                    clean_name = m.name.replace("models/", "")
+                    # omni, exp, pro 등 유료/테스트 버전을 완벽히 걸러내고 순수 flash만 찾음
+                    if "flash" in clean_name and "omni" not in clean_name and "exp" not in clean_name and "pro" not in clean_name:
+                        flash_models.append(clean_name)
+                flash_models.sort(reverse=True) # 높은 버전(예: 1.5)부터 정렬
             except Exception:
                 pass
-            
+                
+            # 검색 실패 시 혹은 아무것도 못 찾았을 때를 대비한 든든한 기본 라인업
+            if not flash_models:
+                flash_models = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.0-pro"]
+
             ai_prompt = f"""
             당신은 최고의 전문 스포츠 애널리스트입니다. 어떠한 이모지도 사용하지 마십시오. 
             아래 제공된 최신 야구 데이터를 바탕으로 건조하고 읽기 쉬운 리포트를 작성하십시오.
@@ -94,8 +94,8 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
             제공된 기사를 분석하여, 언급된 각 구단별 이슈를 찾아 구단당 1~2줄로 요약하십시오. (특정 구단에 대한 소식이 없다면 '특이 동향 없음'이라고 표기하십시오.)
             
             [섹션 4: 실시간 주요 뉴스 하이라이트 (KBO & MLB)]
-            수집된 50개의 기사 중 영양가 높은 진짜 야구 이슈(경기 결과, 순위 싸움, 부상, 콜업, 트레이드 등)만 선별하십시오.
-            국내 구단 소식과 메이저리거들의 활약상도 반드시 포함하여 **최소 12개 이상 최대한 많은 이슈**를 리스트 형태로 나열하십시오.
+            수집된 기사 중 영양가 높은 진짜 야구 이슈(경기 결과, 순위 싸움, 부상, 콜업, 트레이드 등)만 선별하십시오.
+            국내 구단 소식과 메이저리거들의 활약상도 반드시 포함하여 **최소 10개 이상 최대한 많은 이슈**를 리스트 형태로 나열하십시오.
             각 이슈에 대한 설명은 **정확히 2줄 분량**으로 간결하고 디테일하게 요약하십시오.
             (중요) 각 이슈의 제목에는 관련된 원문 링크를 클릭할 수 있도록 마크다운 양식으로 걸어주세요.
             
@@ -103,31 +103,39 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
             [순위 원시 데이터]
             {raw_record}
             
-            [당일 야구 뉴스 데이터 50개]
+            [당일 야구 뉴스 데이터 40개]
             {raw_news}
             """
             
-            # [핵심] 503 에러 방어: 실패 시 3초씩 쉬어가며 최대 3번까지 재시도합니다.
-            max_retries = 3
-            for attempt in range(max_retries):
+            # [핵심] 완전 자동 우회 시스템 가동
+            success = False
+            error_msg = ""
+            
+            # 수집된 1순위, 2순위, 3순위 모델을 차례대로 찔러봅니다.
+            for model_name in flash_models:
                 try:
                     res = client.models.generate_content(
-                        model=target_model,
+                        model=model_name,
                         contents=ai_prompt,
                     )
                     st.markdown(res.text)
-                    break # 성공하면 즉시 반복문을 탈출하여 화면에 뿌려줍니다.
+                    success = True
+                    break # 성공하면 즉시 루프 탈출
                     
                 except Exception as api_e:
-                    # 503 과부하 에러일 경우
-                    if "503" in str(api_e) or "UNAVAILABLE" in str(api_e):
-                        if attempt < max_retries - 1: # 아직 재시도 기회가 남았다면
-                            time.sleep(3) # 3초 숨 고르기 후 다시 시도
-                            continue
-                    
-                    # 다른 에러거나, 3번 다 실패했을 경우 에러 메시지 출력
-                    st.error(f"구글 서버 과부하로 처리가 지연되었습니다. 새로고침을 눌러주세요. (상세에러: {api_e})")
-                    break
+                    # 503(과부하)이나 429(한도초과) 에러가 나면 1초 쉬고 다음 모델(예: 8b)로 자동 전환
+                    if "503" in str(api_e) or "UNAVAILABLE" in str(api_e) or "429" in str(api_e):
+                        error_msg = str(api_e)
+                        time.sleep(1)
+                        continue 
+                    else:
+                        st.error(f"예상치 못한 오류 발생: {api_e}")
+                        success = True
+                        break
+            
+            # 준비된 모든 모델(서버)이 다 터졌을 경우에만 최후의 메시지 출력
+            if not success:
+                st.error("현재 구글 서버 전체에 트래픽이 폭주하여 일시적으로 마비되었습니다. 1~2분 뒤에 새로고침해 주세요.")
                     
         except Exception as e:
             st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
