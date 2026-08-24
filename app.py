@@ -1,9 +1,8 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET # RSS 파싱을 위해 다시 등판!
 from google import genai
-import re
 import time
 
 # 1. 화면 설정
@@ -17,7 +16,7 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-st.title("⚾ KBO & MLB 실시간 브리핑")
+st.title("⚾ KBO 실시간 브리핑")
 
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
@@ -26,20 +25,32 @@ def fetch_baseball_data():
     record_text = ""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
-    # [데이터 1] 뉴스 50개 넉넉히 수집
+    # [데이터 1] 막힐 걱정 없는 구글 뉴스 RSS 공식 뒷문 사용 (사용자님의 KBO 큐레이션 링크 기반)
     try:
-        url = "https://news.google.com/rss/search?q=(KBO OR 프로야구) OR (메이저리그 OR 코리안리거 OR 류현진 OR 김하성 OR 이정후 OR 샌디에이고 OR 샌프란시스코)+when:1d&hl=ko&gl=KR&ceid=KR:ko"
-        res = requests.get(url, headers=headers, timeout=10)
+        # 일반 웹페이지 주소가 아닌, 구글이 컴퓨터에게 제공하는 공식 RSS 주소
+        rss_url = "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdvU0FtdHZHZ0pMVWlnQVAB?hl=ko&gl=KR&ceid=KR:ko"
+        res = requests.get(rss_url, headers=headers, timeout=10)
+        
+        # 디자인 태그(HTML)를 찾는 게 아니라, 정형화된 데이터(XML)를 읽기 때문에 영구적으로 안정적입니다.
         root = ET.fromstring(res.text)
         
-        for i, item in enumerate(root.findall('.//item')[:50]):
+        unique_news = []
+        for item in root.findall('.//item'):
             title = item.find('title').text
             link = item.find('link').text
-            news_text += f"{i+1}. 제목: {title}\n링크: {link}\n\n"
+            
+            if title and len(title) > 8 and title not in [n['title'] for n in unique_news]:
+                unique_news.append({'title': title, 'link': link})
+                
+                if len(unique_news) >= 60: # 60개 넉넉히 수집
+                    break
+                    
+        for i, news in enumerate(unique_news):
+            news_text += f"{i+1}. 제목: {news['title']}\n링크: {news['link']}\n\n"
     except Exception as e:
         news_text = "뉴스 수집 실패"
 
-    # [데이터 2] KBO 순위표 수집 (네이버 통합검색 우회)
+    # [데이터 2] KBO 순위표 (네이버 검색결과는 봇 방어막이 매우 약해서 가장 안전한 우회로입니다)
     try:
         rank_url = "https://search.naver.com/search.naver?where=nexearch&query=KBO+%EC%88%9C%EC%9C%84"
         res_record = requests.get(rank_url, headers=headers, timeout=10)
@@ -69,7 +80,7 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             
-            # [자동 모델 검색] 유료, 테스트 버전을 빼고 쾌적한 flash 정식 버전만 가져오기
+            # [자동 모델 검색]
             flash_models = []
             try:
                 for m in client.models.list():
@@ -83,43 +94,42 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
             if not flash_models:
                 flash_models = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.0-pro"]
 
-            # [핵심] 환각 방지 및 완벽한 중복 제거를 위한 엄격한 규칙 기반 프롬프트
+            # [핵심] 환각 방지 절대 규칙 유지
             ai_prompt = f"""
             당신은 최고의 전문 스포츠 애널리스트입니다. 어떠한 이모지도 사용하지 마십시오. 
-            아래 제공된 최신 야구 데이터를 바탕으로 리포트를 작성하되, 다음의 **[절대 규칙]**을 반드시 지키십시오.
+            아래 제공된 야구 데이터를 바탕으로 리포트를 작성하되, 다음의 **[절대 규칙]**을 반드시 지키십시오.
             
             [절대 규칙]
-            1. 환각(거짓말) 금지: 제공된 '당일 야구 뉴스 데이터'에 없는 사실(예: KBO 선수를 MLB 소속으로 둔갑)을 절대 지어내지 마십시오.
-            2. 완벽한 중복 제거: '이정후 무안타', '특정 구단 승리' 등 동일한 인물이나 동일한 사건을 다루는 기사가 여러 개라면, **반드시 단 1개의 항목으로 완벽하게 통합**하십시오. 리스트에 비슷한 내용이 2번 이상 나오면 절대 안 됩니다.
-            3. 엄격한 분류: KBO 소속 구단/선수 기사는 무조건 [KBO 주요 뉴스]에, 샌프란시스코 이정후, 샌디에이고 김하성 등 메이저리그 관련 기사는 무조건 [MLB 코리안리거 동향]에 넣으십시오. 섞이면 안 됩니다.
-            4. 시각적 가독성: 각 뉴스 항목 앞에는 반드시 글머리 기호('-')를 붙이고, 하나의 뉴스가 끝날 때마다 반드시 1줄의 빈 줄(엔터)을 띄워 글씨가 뭉치지 않게 하십시오.
+            1. 팩트 엄수 (환각 방지): 당신은 기사의 '본문'이 아닌 오직 수집된 '제목'만 보고 있습니다. 따라서 제목에 없는 구체적인 점수, 타율, 소속팀 등을 상상해서 지어내지 마십시오. 모르면 절대 적지 마십시오.
+            2. 완벽한 중복 제거: 비슷한 주제나 동일한 선수를 다루는 기사 제목이 여러 개라면, **무조건 단 1개의 항목으로 통합**하십시오.
+            3. 시각적 가독성: 각 뉴스 항목 앞에는 반드시 글머리 기호('-')를 붙이고, 하나의 뉴스가 끝날 때마다 반드시 1줄의 빈 줄(엔터)을 띄워 글씨가 뭉치지 않게 하십시오.
             
             -------------------------
             
             [섹션 1: 현재 KBO 구단 순위]
             제공된 [순위 원시 데이터]를 바탕으로 1위부터 10위까지 순위표를 작성하십시오.
-            (반드시 마크다운 표(Table) 형식(`| 순위 | 구단명 | 승률 | 게임차 |`)을 사용하여 엑셀처럼 깔끔하게 출력)
+            (반드시 마크다운 표(Table) 형식(`| 순위 | 구단명 | 승률 | 게임차 |`)을 사용하여 출력)
             
             [섹션 2: KBO 데일리 브리핑 (전체 흐름 파악)]
             어제 경기 결과에 따른 순위 변동 상황과 오늘 KBO에서 주목해야 할 가장 큰 화두를 요약하십시오.
             
             [섹션 3: 구단별 주요 동향 요약]
-            각 구단별 이슈를 찾아 구단당 1~2줄로 요약하십시오. (특정 구단 소식이 없다면 '특이 동향 없음' 표기)
+            제공된 '기사 제목'들을 바탕으로 각 구단별 이슈를 찾아 구단당 1~2줄로 요약하십시오. (특정 구단 소식이 없다면 '특이 동향 없음' 표기)
             
-            [섹션 4: 실시간 주요 뉴스 하이라이트]
-            수집된 기사 데이터를 분석하여 가십성을 제거하고, 오직 두 가지 카테고리(**[KBO 주요 뉴스]**, **[MLB 코리안리거 동향]**)로만 분류하십시오.
-            위의 [절대 규칙]에 따라 중복을 완벽히 제거한 뒤, 두 카테고리를 합쳐서 **가장 중요한 이슈 순서대로 총 12개~15개 내외**의 리스트를 구성하십시오.
-            각 이슈의 제목에는 원문 링크를 마크다운 양식으로 걸고, 설명은 딱 2줄 분량으로 상세히 적어주십시오.
+            [섹션 4: KBO 실시간 뉴스 하이라이트]
+            수집된 기사 데이터를 분석하여 가십성을 제거하십시오.
+            위의 [절대 규칙]에 따라 중복을 완벽히 제거한 뒤, **가장 중요한 이슈 순서대로 총 15개 내외**의 리스트를 구성하십시오.
+            각 이슈의 제목에는 원문 링크를 마크다운 양식으로 걸고, 설명은 오직 제목에서 유추할 수 있는 '팩트'만 1~2줄로 명확하게 적어주십시오.
             
             데이터:
             [순위 원시 데이터]
             {raw_record}
             
-            [당일 야구 뉴스 데이터 50개]
+            [당일 야구 뉴스 데이터 60개]
             {raw_news}
             """
             
-            # 완전 자동 우회 시스템 (503 에러 방어: 1.5초 대기 후 다음 모델로 전환)
+            # 자동 우회 시스템 (503 에러 방어)
             success = False
             for model_name in flash_models:
                 try:
