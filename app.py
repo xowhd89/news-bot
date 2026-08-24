@@ -3,7 +3,8 @@ import requests
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 from google import genai
-import re # 문자열 필터링을 위한 정규표현식 모듈 추가
+import re
+import time # 서버 지연 시 대기하기 위한 모듈 추가
 
 # 1. 화면 설정
 st.set_page_config(page_title="Gemini", layout="centered")
@@ -54,7 +55,7 @@ def fetch_baseball_data():
     return news_text, record_text
 
 # 앱 실행 시 자동 분석 시작
-with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니다..."):
+with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니다... (서버 상태에 따라 최대 10초 소요)"):
     raw_news, raw_record = fetch_baseball_data()
     
     if not raw_news.strip() or "뉴스 수집 실패" in raw_news:
@@ -63,20 +64,18 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             
-            target_model = 'gemini-1.5-flash' # 최후의 보험
+            target_model = 'gemini-1.5-flash'
             try:
                 flash_models = []
                 for m in client.models.list():
                     if hasattr(m, 'supported_actions') and 'generateContent' in m.supported_actions:
                         clean_name = m.name.replace("models/", "")
-                        
-                        # [핵심 수정] omni 같은 함정 모델을 피하기 위해 숫자 정식 버전(예: gemini-1.5-flash, gemini-2.0-flash)만 엄격하게 필터링
                         if re.match(r"^gemini-\d+\.\d+-flash$", clean_name):
                             flash_models.append(clean_name)
                 
                 if flash_models:
-                    flash_models.sort(reverse=True) # 2.0, 1.5 순으로 정렬
-                    target_model = flash_models[0]  # 가장 높은 버전 선택
+                    flash_models.sort(reverse=True)
+                    target_model = flash_models[0]
             except Exception:
                 pass
             
@@ -108,12 +107,27 @@ with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니�
             {raw_news}
             """
             
-            res = client.models.generate_content(
-                model=target_model,
-                contents=ai_prompt,
-            )
-            
-            st.markdown(res.text)
-            
+            # [핵심] 503 에러 방어: 실패 시 3초씩 쉬어가며 최대 3번까지 재시도합니다.
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    res = client.models.generate_content(
+                        model=target_model,
+                        contents=ai_prompt,
+                    )
+                    st.markdown(res.text)
+                    break # 성공하면 즉시 반복문을 탈출하여 화면에 뿌려줍니다.
+                    
+                except Exception as api_e:
+                    # 503 과부하 에러일 경우
+                    if "503" in str(api_e) or "UNAVAILABLE" in str(api_e):
+                        if attempt < max_retries - 1: # 아직 재시도 기회가 남았다면
+                            time.sleep(3) # 3초 숨 고르기 후 다시 시도
+                            continue
+                    
+                    # 다른 에러거나, 3번 다 실패했을 경우 에러 메시지 출력
+                    st.error(f"구글 서버 과부하로 처리가 지연되었습니다. 새로고침을 눌러주세요. (상세에러: {api_e})")
+                    break
+                    
         except Exception as e:
             st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
