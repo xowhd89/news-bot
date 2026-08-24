@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 from google import genai
 
-# 1. 화면 설정
+# 1. 화면 설정 (앱처럼 보이도록 위장)
 st.set_page_config(page_title="Gemini", layout="centered")
 hide_st_style = """
             <style>
@@ -19,26 +19,28 @@ st.title("Gemini")
 
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
-def fetch_kbo_data():
+def fetch_baseball_data():
     news_text = ""
     record_text = ""
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
-    # [뉴스] 구글 뉴스 RSS (차단 없는 안전한 수집처)
+    # [데이터 1] KBO + MLB 코리안리거 실시간 뉴스 (구글 뉴스 RSS 우회)
     try:
-        url = "https://news.google.com/rss/search?q=KBO+프로야구+when:1d&hl=ko&gl=KR&ceid=KR:ko"
+        # 검색어 확장: KBO 프로야구 및 코리안 메이저리거 관련 키워드
+        url = "https://news.google.com/rss/search?q=(KBO OR 프로야구) OR (메이저리그 OR 코리안리거 OR 류현진 OR 김하성 OR 이정후 OR 샌디에이고 OR 샌프란시스코)+when:1d&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, headers=headers, timeout=10)
         root = ET.fromstring(res.text)
-        for i, item in enumerate(root.findall('.//item')[:30]):
+        
+        # 넉넉하게 50개의 기사를 수집하여 AI에게 넘김 (분석 풀 확보)
+        for i, item in enumerate(root.findall('.//item')[:50]):
             title = item.find('title').text
             link = item.find('link').text
             news_text += f"{i+1}. 제목: {title}\n링크: {link}\n\n"
     except Exception as e:
         news_text = "뉴스 수집 실패"
 
-    # [순위] '우회 프록시 서버'를 통해 KBO 공식 홈페이지 데이터 추출 (차단 원천 방지)
+    # [데이터 2] KBO 순위표 (프록시 서버 우회 - 차단 원천 봉쇄)
     try:
-        # api.allorigins.win 프록시를 거쳐 KBO 사이트에 우회 접속합니다.
         proxy_url = "https://api.allorigins.win/raw?url=https://www.koreabaseball.com/TeamRank/TeamRank.aspx"
         res_record = requests.get(proxy_url, headers=headers, timeout=15)
         soup = BeautifulSoup(res_record.text, 'html.parser')
@@ -52,47 +54,64 @@ def fetch_kbo_data():
         
     return news_text, record_text
 
-# 앱 실행 시 자동 분석
-with st.spinner("가장 핫한 당일 KBO 뉴스를 분석하고 있습니다..."):
-    raw_news, raw_record = fetch_kbo_data()
+# 앱 실행 시 자동 분석 시작
+with st.spinner("야구계 최신 동향을 완벽하게 분석하고 있습니다..."):
+    raw_news, raw_record = fetch_baseball_data()
     
     if not raw_news.strip() or "뉴스 수집 실패" in raw_news:
-        st.error("데이터를 읽어오지 못했습니다. 새로고침을 시도해 주세요.")
+        st.error("데이터 통신에 실패했습니다. 화면을 새로고침 해 주십시오.")
     else:
         try:
-            # 3.6-flash 대신 가장 안정적인 최신 기본 모델 사용
+            # AI 모델 초기화
             client = genai.Client(api_key=GEMINI_API_KEY)
             
+            # [자동 모델 감지 로직] 사용 가능한 모델 목록을 검색하여 최적의 모델(flash 또는 pro)을 자동 선택
+            target_model = 'gemini-1.5-flash' # 기본 권장 모델
+            available_models = client.models.list_models()
+            model_names = [m.name for m in available_models if 'generateContent' in m.supported_generation_methods]
+            
+            # 'models/' 접두사가 붙는 경우와 안 붙는 경우를 모두 커버하여 안전하게 모델 지정
+            if any('gemini-1.5-flash' in name for name in model_names):
+                target_model = next(name for name in model_names if 'gemini-1.5-flash' in name)
+            elif any('gemini-pro' in name for name in model_names):
+                target_model = next(name for name in model_names if 'gemini-pro' in name)
+            
+            # 우리가 합의한 완벽한 4단 구조 프롬프트
             ai_prompt = f"""
-            당신은 전문적인 스포츠 애널리스트입니다. 어떠한 이모지도 절대 사용하지 마십시오. 
-            아래 제공된 당일 KBO 데이터를 바탕으로 건조하고 전문적인 리포트를 작성하십시오.
+            당신은 최고의 전문 스포츠 애널리스트입니다. 어떠한 이모지도 사용하지 마십시오. 
+            아래 제공된 최신 야구 데이터를 바탕으로 건조하고 읽기 쉬운 리포트를 작성하십시오.
             
             [섹션 1: 현재 KBO 구단 순위]
             제공된 [순위 원시 데이터]를 바탕으로 1위부터 10위까지 순위표를 가장 먼저 작성하십시오.
             표의 열은 [순위 / 구단명 / 승률 / 게임차] 4가지만 표시하십시오.
             
-            [섹션 2: 주요 뉴스 종합 요약 (최대한 많이 다룰 것)]
-            제공된 30개의 기사를 분석하여 주요 이슈를 뽑아내십시오.
-            단, 4~5개로 너무 압축하지 말고, 사소한 기사라도 버리지 말고 **최소 10개 이상, 최대한 많은 이슈**를 뽑아서 나열하십시오.
-            내용이 길어지면 안 됩니다. 각 이슈에 대한 설명은 **정확히 1~2줄 분량**으로 간결하게 핵심만 요약하십시오.
-            (중요) 각 이슈의 제목에는 관련된 원문 링크를 마크다운 양식으로 걸어주세요.
+            [섹션 2: KBO 데일리 브리핑 (전체 흐름 파악)]
+            수집된 기사들을 종합하여, 어제 경기 결과에 따른 순위 변동 상황과 오늘 KBO에서 주목해야 할 가장 큰 화두(큰 줄기)를 3~4줄로 굵직하게 요약하십시오.
             
-            [섹션 3: 구단별 동향 정리]
-            제공된 기사를 분석하여, 언급된 각 구단별 이슈를 1~2줄로 빠짐없이 요약하십시오.
+            [섹션 3: 구단별 주요 동향 요약]
+            제공된 기사를 분석하여, 언급된 각 구단별 이슈를 찾아 구단당 1~2줄로 요약하십시오. (만약 특정 구단에 대한 유의미한 소식이 없다면 억지로 지어내지 말고 '특이 동향 없음'이라고 표기하십시오.)
+            
+            [섹션 4: 실시간 주요 뉴스 하이라이트 (KBO & MLB)]
+            수집된 50개의 기사 중 가십성 기사를 버리고 영양가 높은 진짜 야구 이슈(경기 결과, 순위 싸움, 부상, 콜업, 트레이드 등)만 선별하십시오.
+            국내 구단 소식과 더불어 코리안 메이저리거들의 활약상도 반드시 포함하여 **최소 12개 이상 최대한 많은 이슈**를 리스트 형태로 나열하십시오.
+            각 이슈에 대한 설명은 **정확히 2줄 분량**으로 간결하고 디테일하게 요약하십시오.
+            (중요) 각 이슈의 제목에는 관련된 원문 링크를 클릭할 수 있도록 마크다운 양식으로 걸어주세요.
             
             데이터:
             [순위 원시 데이터]
             {raw_record}
             
-            [당일 뉴스 데이터 30개]
+            [당일 야구 뉴스 데이터 50개]
             {raw_news}
             """
             
+            # 자동 감지된 모델을 사용하여 콘텐츠 생성
             res = client.models.generate_content(
-                model='gemini-1.5-flash',
+                model=target_model,
                 contents=ai_prompt,
             )
             
+            # 깔끔하게 화면에 출력
             st.markdown(res.text)
             
         except Exception as e:
