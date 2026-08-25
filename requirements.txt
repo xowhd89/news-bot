@@ -1,4 +1,4 @@
+pandas
+lxml
+google-generativeai
 streamlit
-requests
-google-genai
-beautifulsoup4
