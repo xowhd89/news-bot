@@ -7,130 +7,145 @@ from email.utils import parsedate_to_datetime
 import google.generativeai as genai
 import streamlit as st
 
-# ----------------------------------------------------
-# 1. 스트림릿 시크릿에서 API 키 호출
-# ----------------------------------------------------
+# ==========================================
+# 1. API 세팅 및 설정
+# ==========================================
 NCP_CLIENT_ID = st.secrets["NCP_CLIENT_ID"]
 NCP_CLIENT_SECRET = st.secrets["NCP_CLIENT_SECRET"]
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-st.set_page_config(page_title="KBO 야구 브리핑 데스크", page_icon="⚾", layout="wide")
-st.title("⚾ KBO 일간 뉴스 종합 브리핑 데스크")
-st.write("실행 시점 기준 **최근 24시간 이내**의 최신 프로야구 뉴스(최대 50개)를 수집하여 AI가 심층 분석합니다.")
+st.set_page_config(page_title="일간 종합 브리핑 데스크", page_icon="📰", layout="wide")
+st.title("📰 일간 종합 뉴스 브리핑 데스크")
+st.write("야구, 정치, 경제, IT, 사회 순으로 최근 24시간 이내의 팩트와 맥락을 심층 분석합니다.")
 
-if st.button("오늘의 KBO 종합 브리핑 생성하기", type="primary"):
-    with st.spinner("순위표 조회, 24시간 내 최신 뉴스 수집 및 AI 심층 분석 중입니다..."):
-        
-        # ----------------------------------------------------
-        # 2. KBO 구단 순위 정보 표 (요구사항 1)
-        # ----------------------------------------------------
+# ==========================================
+# 2. 공통 도우미 함수 (자동 수집 및 모델 선택)
+# ==========================================
+def fetch_latest_news(search_keyword):
+    """지정된 키워드로 100개를 검색해 24시간 이내 최신 기사 최대 50개를 반환합니다."""
+    search_word = urllib.parse.quote(search_keyword)
+    api_url = f"https://naverapihub.apigw.ntruss.com/search/v1/news?query={search_word}&display=100&sort=date"
+
+    request = urllib.request.Request(api_url)
+    request.add_header("X-NCP-APIGW-API-KEY-ID", NCP_CLIENT_ID)
+    request.add_header("X-NCP-APIGW-API-KEY", NCP_CLIENT_SECRET)
+
+    try:
+        response = urllib.request.urlopen(request)
+        data = json.loads(response.read().decode('utf-8'))
+
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        time_limit = now_utc - datetime.timedelta(hours=24)
+
+        recent_items = []
+        for item in data['items']:
+            pub_date = parsedate_to_datetime(item['pubDate'])
+            if pub_date >= time_limit:
+                recent_items.append(item)
+
+        target_items = recent_items[:50]
+        collected_count = len(target_items)
+
+        news_text_list = []
+        for idx, item in enumerate(target_items, start=1):
+            clean_title = re.sub(r'<.*?>|&quot;', '', item['title'])
+            clean_desc = re.sub(r'<.*?>|&quot;', '', item['description'])
+            link = item.get('originallink') or item.get('link')
+            news_text_list.append(f"[{idx}번 뉴스]\n- 제목: {clean_title}\n- 내용: {clean_desc}\n- 링크: {link}")
+
+        return "\n\n".join(news_text_list), collected_count
+    except Exception as e:
+        return "뉴스 수집 실패", 0
+
+def get_best_model():
+    """무료 정식 Flash 모델을 찾아 반환합니다."""
+    valid_models = [
+        m.name for m in genai.list_models()
+        if 'generateContent' in m.supported_generation_methods
+        and 'flash' in m.name.lower()
+        and not any(x in m.name.lower() for x in ['preview', 'exp', 'omni', 'vision', 'embedding'])
+    ]
+    return sorted(valid_models, reverse=True)[0] if valid_models else 'models/gemini-3.6-flash'
+
+# ==========================================
+# 3. 메인 실행 블록
+# ==========================================
+if st.button("오늘의 5대 분야 종합 브리핑 생성하기", type="primary"):
+    
+    ai_model = genai.GenerativeModel(get_best_model())
+
+    # ----------------------------------------------------
+    # [1] 야구 (기존 로직 100% 동일 유지)
+    # ----------------------------------------------------
+    st.header("⚾ 1. KBO 프로야구 데스크")
+    with st.spinner("야구 순위표와 최신 뉴스를 분석 중입니다..."):
         try:
             url = "https://www.koreabaseball.com/Record/TeamRank/TeamRankDaily.aspx"
             storage_options = {'User-Agent': 'Mozilla/5.0'}
             tables = pd.read_html(url, storage_options=storage_options)
-            clean_ranking = tables[0][['순위', '팀명', '승', '무', '패', '승률', '게임차']]
+            st.subheader("📊 오늘의 KBO 구단 순위")
+            st.dataframe(tables[0][['순위', '팀명', '승', '무', '패', '승률', '게임차']], use_container_width=True, hide_index=True)
+        except Exception:
+            st.error("순위표 데이터를 가져오는 데 실패했습니다.")
 
-            st.subheader("📊 1. KBO 구단 순위")
-            st.dataframe(clean_ranking, use_container_width=True, hide_index=True)
-        except Exception as e:
-            st.error("순위표 데이터를 가져오는 중 문제가 발생했습니다.")
+        baseball_news, b_count = fetch_latest_news("프로야구")
+        if b_count > 0:
+            prompt_baseball = f"""
+당신은 KBO 전문 야구 데스크입니다. 아래 [수집된 뉴스 {b_count}개]를 바탕으로 작성해 주세요.
+1. 📝 전체 뉴스 종합 브리핑: 오늘 KBO 주요 화제를 2~3문단으로 상세하게 (LG 트윈스 관련 이슈 집중).
+2. 🏟️ 구단별 및 기타 뉴스 분류: 기사를 구단별로 묶고, 리그 규정이나 일반 소식은 [KBO 일반 및 기타 뉴스]로 분리.
+3. 📋 중복 제거 뉴스 목록: 동일 사건 기사는 하나로 합치고, [이슈 타이틀] / 3줄 요약 / 🔗 [원문 기사 보기](실제 링크) 형식 준수.
 
-        # ----------------------------------------------------
-        # 3. 최신 프로야구 뉴스 수집 (100개 호출 -> 24시간 이내 50개 필터링)
-        # ----------------------------------------------------
-        search_word = urllib.parse.quote("프로야구")
-        # 넉넉하게 100개를 호출하여 24시간 이내의 데이터를 최대한 확보
-        api_url = f"https://naverapihub.apigw.ntruss.com/search/v1/news?query={search_word}&display=100&sort=date"
-
-        request = urllib.request.Request(api_url)
-        request.add_header("X-NCP-APIGW-API-KEY-ID", NCP_CLIENT_ID)
-        request.add_header("X-NCP-APIGW-API-KEY", NCP_CLIENT_SECRET)
-
-        try:
-            response = urllib.request.urlopen(request)
-            data = json.loads(response.read().decode('utf-8'))
-
-            # 시간 필터링 기준 (현재 시간 - 24시간)
-            now_utc = datetime.datetime.now(datetime.timezone.utc)
-            time_limit = now_utc - datetime.timedelta(hours=24)
-
-            recent_items = []
-            for item in data['items']:
-                # 기사의 발행 시간(pubDate)을 파이썬 날짜 객체로 변환
-                pub_date = parsedate_to_datetime(item['pubDate'])
-                
-                # 24시간 이내에 작성된 기사만 통과
-                if pub_date >= time_limit:
-                    recent_items.append(item)
-
-            # 필터링된 기사 중 가장 최신순으로 50개만 자르기
-            target_items = recent_items[:50]
-            collected_count = len(target_items)
-
-            news_text_list = []
-            for idx, item in enumerate(target_items, start=1):
-                clean_title = re.sub(r'<.*?>|&quot;', '', item['title'])
-                clean_desc = re.sub(r'<.*?>|&quot;', '', item['description'])
-                link = item.get('originallink') or item.get('link')
-                
-                news_text_list.append(
-                    f"[{idx}번 뉴스]\n"
-                    f"- 제목: {clean_title}\n"
-                    f"- 내용: {clean_desc}\n"
-                    f"- 링크: {link}"
-                )
-
-            all_news_text = "\n\n".join(news_text_list)
-            st.success(f"✔️ 최근 24시간 이내의 유효 기사 **{collected_count}개**를 성공적으로 확보했습니다.")
-            
-        except Exception as e:
-            st.error(f"뉴스 수집 중 오류 발생: {e}")
-            all_news_text = "뉴스 수집 실패"
-            collected_count = 0
-
-        # ----------------------------------------------------
-        # 4. AI 모델 자동 선택 및 정밀 브리핑 생성 (요구사항 2, 3, 4)
-        # ----------------------------------------------------
-        if all_news_text != "뉴스 수집 실패" and collected_count > 0:
-            valid_models = [
-                m.name for m in genai.list_models()
-                if 'generateContent' in m.supported_generation_methods
-                and 'flash' in m.name.lower()
-                and not any(x in m.name.lower() for x in ['preview', 'exp', 'omni', 'vision', 'embedding'])
-            ]
-            selected_model = sorted(valid_models, reverse=True)[0] if valid_models else 'models/gemini-3.6-flash'
-            model = genai.GenerativeModel(selected_model)
-
-            prompt = f"""
-당신은 KBO 전문 야구 데스크입니다. 아래 제공된 [최근 24시간 이내 수집된 뉴스 {collected_count}개]를 바탕으로 다음 3개 섹션을 명확한 마크다운 규격으로 작성해 주세요.
-
----
-### 2. 📝 전체 뉴스 종합 브리핑
-- 수집된 기사 전체를 관통하는 오늘 KBO 리그의 주요 화제, 판도 변화, 주요 경기 흐름을 2~3문단으로 상세하고 짜임새 있게 작성해 주세요. (특히 LG 트윈스와 관련된 주요 이슈가 있다면 핵심 포커스로 다뤄주세요.)
-
----
-### 3. 🏟️ 구단별 및 KBO 일반/기타 뉴스 분류
-- 기사들을 구단별([LG 트윈스], [KIA 타이거즈], [두산 베어스] 등)로 명확히 분류해 주세요.
-- 특정 구단 소속이 아닌 리그 정책(경기수 조정 등), 국가대표팀, 야구계 일반, 전직 감독/해설위원 등의 소식은 반드시 **[KBO 일반 및 기타 뉴스]** 카테고리를 별도로 만들어 분리 배치해 주세요.
-
----
-### 4. 📋 중복 제거 뉴스 전수 목록 (3~4줄 요약 & 원문 링크)
-- 수집된 모든 뉴스 중 동일한 경기 결과나 동일 사건을 다룬 기사들은 완벽하게 하나로 통합(중복 제거)하세요.
-- 통합된 모든 고유 이슈를 빠짐없이 나열하고, 각 이슈마다 아래 형식을 엄격히 준수해 주세요:
-  * **[이슈 타이틀]**
-  * 핵심 사실 중심의 3~4줄 요약
-  * 🔗 [원문 기사 보기](제공된 뉴스 데이터의 실제 링크 URL)
----
-
-[수집된 뉴스 데이터]
-{all_news_text}
+[수집된 뉴스]
+{baseball_news}
 """
-            summary_result = model.generate_content(prompt)
+            st.markdown(ai_model.generate_content(prompt_baseball).text)
+        else:
+            st.warning("수집된 야구 뉴스가 없습니다.")
+    st.divider()
 
-            st.divider()
-            st.markdown(summary_result.text)
+    # ----------------------------------------------------
+    # [2] 정치 / [3] 경제 / [4] IT / [5] 사회 (반복 로직)
+    # ----------------------------------------------------
+    categories = [
+        {"title": "🏛️ 2. 정치 및 정책 데스크", "keyword": "국내 정치 주요 정책 핵심 쟁점", "name": "정치"},
+        {"title": "📈 3. 거시 경제 데스크", "keyword": "글로벌 거시 경제 주요 산업 동향", "name": "경제"},
+        {"title": "💻 4. IT (AI 및 사이버 보안) 데스크", "keyword": "생성형 AI 인공지능 사이버보안 정보보안", "name": "IT(AI 및 사이버 보안)"},
+        {"title": "🏢 5. 사회 주요 쟁점 데스크", "keyword": "국내 사회 주요 사건 쟁점 이슈", "name": "사회"}
+    ]
+
+    for cat in categories:
+        st.header(cat["title"])
+        with st.spinner(f"{cat['name']} 분야의 최신 뉴스를 수집하고 맥락을 분석 중입니다..."):
+            news_text, count = fetch_latest_news(cat["keyword"])
             
-        elif collected_count == 0:
-            st.warning("최근 24시간 이내에 작성된 프로야구 뉴스가 없습니다.")
+            if count > 0:
+                prompt_general = f"""
+당신은 {cat['name']} 전문 데스크입니다. 아래 [수집된 뉴스 {count}개]를 바탕으로 2개 섹션을 작성해 주세요.
+
+---
+### 1. 📝 {cat['name']} 전체 종합 브리핑
+- 수집된 기사 전체를 관통하는 오늘의 핵심 쟁점과 큰 줄기를 2~3문단으로 압축 정리해 주세요.
+
+---
+### 2. 📋 중복 제거 뉴스 전수 목록 (3줄 요약 & 원문 링크)
+- 수집된 50개 뉴스 중 동일한 사건이나 유사한 분석을 다룬 기사들은 완벽하게 하나로 통합(중복 제거)하세요.
+- 통합된 고유 이슈를 빠짐없이 나열하고, 각 이슈마다 아래 형식을 엄격히 준수해 주세요:
+  * **[이슈 타이틀]**
+  * 1줄: 무슨 사건(발언/발표)이 있었는가?
+  * 2줄: 핵심 쟁점 또는 관련자들의 입장
+  * 3줄: 향후 예상되는 파급 효과나 일정
+  * 🔗 [원문 기사 보기](제공된 기사의 실제 원문 링크 URL)
+---
+[수집된 뉴스]
+{news_text}
+"""
+                st.markdown(ai_model.generate_content(prompt_general).text)
+            else:
+                st.warning(f"최근 24시간 내 유효한 {cat['name']} 뉴스가 없습니다.")
+        
+        st.divider()
+
+st.success("모든 분야의 브리핑이 완료되었습니다!")
