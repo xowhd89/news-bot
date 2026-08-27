@@ -1,5 +1,5 @@
 # ==========================================
-# 일간 종합 동향 보고서 v1 (Streamlit App)
+# 일간 종합 동향 보고서 v1.1 (Streamlit App)
 # ==========================================
 
 import pandas as pd
@@ -11,22 +11,22 @@ from email.utils import parsedate_to_datetime
 import google.generativeai as genai
 import streamlit as st
 
-# 1. API 세팅 및 설정 (스트림릿 시크릿 사용)
+# 1. API 세팅 및 설정
 NCP_CLIENT_ID = st.secrets["NCP_CLIENT_ID"]
 NCP_CLIENT_SECRET = st.secrets["NCP_CLIENT_SECRET"]
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# 이모지 전면 제거 및 정갈한 기업용 보고서 테마
-st.set_page_config(page_title="일간 종합 동향 보고서 v1", layout="wide")
-st.title("일간 종합 동향 보고서 (v1)")
+st.set_page_config(page_title="일간 종합 동향 보고서 v1.1", layout="wide")
+st.title("일간 종합 동향 보고서 (v1.1)")
 st.write("최근 24시간 이내의 각 분야별 핵심 팩트와 맥락을 심층 분석한 일일 브리핑입니다.")
 
-# 2. 공통 도우미 함수 (24시간 필터링 및 50개 추출)
-def fetch_latest_news(search_keyword):
+# 2. 공통 도우미 함수
+def fetch_news_items(search_keyword, display_count=100):
+    """단일 키워드로 기사를 검색해 24시간 이내의 아이템 리스트를 반환합니다."""
     search_word = urllib.parse.quote(search_keyword)
-    api_url = f"https://naverapihub.apigw.ntruss.com/search/v1/news?query={search_word}&display=100&sort=date"
+    api_url = f"https://naverapihub.apigw.ntruss.com/search/v1/news?query={search_word}&display={display_count}&sort=date"
 
     request = urllib.request.Request(api_url)
     request.add_header("X-NCP-APIGW-API-KEY-ID", NCP_CLIENT_ID)
@@ -44,20 +44,20 @@ def fetch_latest_news(search_keyword):
             pub_date = parsedate_to_datetime(item['pubDate'])
             if pub_date >= time_limit:
                 recent_items.append(item)
-
-        target_items = recent_items[:50]
-        collected_count = len(target_items)
-
-        news_text_list = []
-        for idx, item in enumerate(target_items, start=1):
-            clean_title = re.sub(r'<.*?>|&quot;', '', item['title'])
-            clean_desc = re.sub(r'<.*?>|&quot;', '', item['description'])
-            link = item.get('originallink') or item.get('link')
-            news_text_list.append(f"[{idx}번 뉴스]\n- 제목: {clean_title}\n- 내용: {clean_desc}\n- 링크: {link}")
-
-        return "\n\n".join(news_text_list), collected_count
+        return recent_items
     except Exception:
-        return "뉴스 수집 실패", 0
+        return []
+
+def format_news_text(items, max_count=50):
+    """아이템 리스트를 프롬프트용 텍스트로 변환합니다."""
+    target_items = items[:max_count]
+    news_text_list = []
+    for idx, item in enumerate(target_items, start=1):
+        clean_title = re.sub(r'<.*?>|&quot;', '', item['title'])
+        clean_desc = re.sub(r'<.*?>|&quot;', '', item['description'])
+        link = item.get('originallink') or item.get('link')
+        news_text_list.append(f"[{idx}번 뉴스]\n- 제목: {clean_title}\n- 내용: {clean_desc}\n- 링크: {link}")
+    return "\n\n".join(news_text_list), len(target_items)
 
 def get_best_model():
     valid_models = [
@@ -74,7 +74,7 @@ if st.button("오늘의 5대 분야 종합 브리핑 생성하기", type="primar
     ai_model = genai.GenerativeModel(get_best_model())
 
     # ----------------------------------------------------
-    # [1] 야구 (객관적 리그 요약 + 구단별/메이저리거)
+    # [1] 야구 (KBO + MLB 개별 수집 후 병합)
     # ----------------------------------------------------
     st.header("1. KBO 및 코리안 메이저리거 동향")
     with st.spinner("야구 순위표와 최신 뉴스를 분석 중입니다..."):
@@ -87,7 +87,13 @@ if st.button("오늘의 5대 분야 종합 브리핑 생성하기", type="primar
         except Exception:
             st.error("순위표 데이터를 가져오는 데 실패했습니다.")
 
-        baseball_news, b_count = fetch_latest_news("프로야구 코리안 메이저리거")
+        # KBO 뉴스와 메이저리그 뉴스를 각각 수집하여 병합
+        kbo_items = fetch_news_items("프로야구", display_count=70)
+        mlb_items = fetch_news_items("메이저리그", display_count=30)
+        all_baseball_items = kbo_items + mlb_items
+
+        baseball_news, b_count = format_news_text(all_baseball_items, max_count=50)
+
         if b_count > 0:
             prompt_baseball = f"""
 당신은 전문 야구 데스크입니다. 수집된 뉴스 {b_count}개를 바탕으로 업무용 보고서 톤으로 작성해 주세요. (출력 시 모든 이모지 사용 절대 금지)
@@ -112,7 +118,7 @@ if st.button("오늘의 5대 분야 종합 브리핑 생성하기", type="primar
 """
             st.markdown(ai_model.generate_content(prompt_baseball).text)
         else:
-            st.warning("수집된 야구 뉴스가 없습니다.")
+            st.warning("최근 24시간 내 유효한 야구 뉴스가 없습니다.")
     st.divider()
 
     # ----------------------------------------------------
@@ -128,7 +134,8 @@ if st.button("오늘의 5대 분야 종합 브리핑 생성하기", type="primar
     for cat in categories:
         st.header(cat["title"])
         with st.spinner(f"{cat['name']} 분야의 최신 뉴스를 수집하고 맥락을 분석 중입니다..."):
-            news_text, count = fetch_latest_news(cat["keyword"])
+            cat_items = fetch_news_items(cat["keyword"], display_count=100)
+            news_text, count = format_news_text(cat_items, max_count=50)
             
             if count > 0:
                 prompt_general = f"""
