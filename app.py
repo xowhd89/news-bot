@@ -1,5 +1,5 @@
 # ==========================================
-# 일간 종합 동향 보고서 v2 (Streamlit App)
+# 일간 종합 동향 보고서 v2.1 (Streamlit App)
 # ==========================================
 
 import pandas as pd
@@ -18,7 +18,7 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-st.set_page_config(page_title="일간 종합 동향 보고서 v2", layout="wide")
+st.set_page_config(page_title="일간 종합 동향 보고서 v2.1", layout="wide")
 st.title("일간 종합 동향 보고서")
 st.write("각 분야별 24시간 이내 최신 동향을 통합 요약 및 상세 분석한 보고서입니다.")
 
@@ -67,14 +67,13 @@ def get_best_model():
 # 3. 메인 실행 블록
 if st.button("보고서 생성 실행", type="primary"):
     
-    # 보고서 레이아웃 (3단 분리)
     rank_container = st.container()
     st.divider()
     summary_container = st.container()
     st.divider()
     detail_container = st.container()
 
-    # [섹션 1] 순위표 할당
+    # [섹션 1] KBO 순위표
     with rank_container:
         st.header("1. 오늘의 KBO 구단 순위")
         try:
@@ -91,12 +90,13 @@ if st.button("보고서 생성 실행", type="primary"):
     with detail_container:
         st.header("3. 분야별 주요 뉴스 상세 (중복 제거)")
 
+    # 검색 키워드 최적화 (단일 키워드 및 복수 키워드 병합)
     categories = [
-        {"idx": 1, "name": "야구", "keyword": "프로야구"},
-        {"idx": 2, "name": "정치", "keyword": "국내 정치 주요 정책 핵심 쟁점"},
-        {"idx": 3, "name": "경제", "keyword": "글로벌 거시 경제 주요 산업 동향"},
-        {"idx": 4, "name": "IT (AI 및 사이버 보안)", "keyword": "생성형 AI 인공지능 사이버보안 정보보안"},
-        {"idx": 5, "name": "사회", "keyword": "국내 사회 주요 사건 쟁점 이슈"}
+        {"idx": 1, "name": "야구", "keywords": ["프로야구", "메이저리그"], "context": "KBO 리그 10개 구단 전체 및 코리안 메이저리거의 동향"},
+        {"idx": 2, "name": "정치", "keywords": ["정치"], "context": "정치 및 국정 주요 정책 분야의 전반적인 동향"},
+        {"idx": 3, "name": "경제", "keywords": ["경제"], "context": "글로벌 거시 경제 및 국내외 산업 분야의 전반적인 동향"},
+        {"idx": 4, "name": "IT (AI 및 사이버 보안)", "keywords": ["인공지능", "사이버보안"], "context": "생성형 AI 및 정보보안/사이버보안 분야의 전반적인 동향"},
+        {"idx": 5, "name": "사회", "keywords": ["사회"], "context": "사회 주요 사건사고 및 제도 현안 분야의 전반적인 동향"}
     ]
 
     ai_model = genai.GenerativeModel(get_best_model())
@@ -105,15 +105,10 @@ if st.button("보고서 생성 실행", type="primary"):
     for cat in categories:
         with st.spinner(f"{cat['name']} 분야 분석 중..."):
             
-            # 야구는 메이저리그를 포함하여 수집
-            if cat["name"] == "야구":
-                kbo_items = fetch_news_items("프로야구", 70)
-                mlb_items = fetch_news_items("메이저리그", 30)
-                all_items = kbo_items + mlb_items
-                prompt_context = "KBO 리그 10개 구단 전체 및 코리안 메이저리거의 동향"
-            else:
-                all_items = fetch_news_items(cat["keyword"], 100)
-                prompt_context = f"{cat['name']} 분야의 전반적인 동향"
+            # 카테고리별 키워드 리스트 순회 수집 후 병합
+            all_items = []
+            for kw in cat["keywords"]:
+                all_items.extend(fetch_news_items(kw, display_count=70))
             
             news_text, count = format_news_text(all_items, 50)
 
@@ -125,7 +120,7 @@ if st.button("보고서 생성 실행", type="primary"):
 
 ===SUMMARY===
 - 특정 이슈나 구단/세력에 편중되지 않게 객관적으로 작성하세요.
-- {prompt_context}을 5줄 내외의 분량으로 압축하여 전체 흐름을 요약해 주세요. 
+- {cat['context']}을 5줄 내외의 분량으로 압축하여 전체 흐름을 요약해 주세요. 
 
 ===DETAILS===
 - 수집된 뉴스 중 동일한 사건이나 중복된 기사는 완벽히 하나로 통합하세요.
@@ -139,9 +134,7 @@ if st.button("보고서 생성 실행", type="primary"):
 """
                 response_text = ai_model.generate_content(prompt).text
                 
-                # AI 응답 텍스트를 정규식으로 분리
                 match = re.search(r'===SUMMARY===(.*?)===DETAILS===(.*)', response_text, re.DOTALL)
-                
                 if match:
                     sum_part = match.group(1).strip()
                     det_part = match.group(2).strip()
@@ -149,7 +142,6 @@ if st.button("보고서 생성 실행", type="primary"):
                     sum_part = "형식 분리에 실패했습니다."
                     det_part = response_text.replace("===SUMMARY===", "").replace("===DETAILS===", "").strip()
 
-                # 분리된 결과를 각각의 컨테이너에 삽입
                 with summary_container:
                     st.subheader(f"{cat['idx']}) {cat['name']}")
                     st.markdown(sum_part)
