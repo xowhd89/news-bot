@@ -1,5 +1,5 @@
 # ==========================================
-# 일간 종합 동향 보고서 v2.1 (Streamlit App)
+# 일간 종합 동향 보고서 (Streamlit App)
 # ==========================================
 
 import pandas as pd
@@ -18,9 +18,9 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-st.set_page_config(page_title="일간 종합 동향 보고서 v2.1", layout="wide")
+st.set_page_config(page_title="일간 종합 동향 보고서", layout="wide")
 st.title("일간 종합 동향 보고서")
-st.write("각 분야별 24시간 이내 최신 동향을 통합 요약 및 상세 분석한 보고서입니다.")
+st.write("각 분야별 24시간 이내 최신 동향을 통합 요약 및 중요도 중심 상세 분석한 보고서입니다.")
 
 # 2. 공통 도우미 함수
 def fetch_news_items(search_keyword, display_count=100):
@@ -90,22 +90,19 @@ if st.button("보고서 생성 실행", type="primary"):
     with detail_container:
         st.header("3. 분야별 주요 뉴스 상세 (중복 제거)")
 
-    # 검색 키워드 최적화 (단일 키워드 및 복수 키워드 병합)
     categories = [
         {"idx": 1, "name": "야구", "keywords": ["프로야구", "메이저리그"], "context": "KBO 리그 10개 구단 전체 및 코리안 메이저리거의 동향"},
         {"idx": 2, "name": "정치", "keywords": ["정치"], "context": "정치 및 국정 주요 정책 분야의 전반적인 동향"},
         {"idx": 3, "name": "경제", "keywords": ["경제"], "context": "글로벌 거시 경제 및 국내외 산업 분야의 전반적인 동향"},
         {"idx": 4, "name": "IT (AI 및 사이버 보안)", "keywords": ["인공지능", "사이버보안"], "context": "생성형 AI 및 정보보안/사이버보안 분야의 전반적인 동향"},
-        {"idx": 5, "name": "사회", "keywords": ["사회"], "context": "사회 주요 사건사고 및 제도 현안 분야의 전반적인 동향"}
+        {"idx": 5, "name": "사회 및 국제(세계) 동향", "keywords": ["사회", "국제"], "context": "국내 주요 사회 현안 및 해외 주요 재난/국제 정세 동향"}
     ]
 
     ai_model = genai.GenerativeModel(get_best_model())
 
-    # 데이터 수집 및 AI 분석 반복
     for cat in categories:
         with st.spinner(f"{cat['name']} 분야 분석 중..."):
             
-            # 카테고리별 키워드 리스트 순회 수집 후 병합
             all_items = []
             for kw in cat["keywords"]:
                 all_items.extend(fetch_news_items(kw, display_count=70))
@@ -114,7 +111,7 @@ if st.button("보고서 생성 실행", type="primary"):
 
             if count > 0:
                 prompt = f"""
-당신은 {cat['name']} 분야 전문 데스크입니다. 수집된 뉴스 {count}개를 바탕으로 객관적인 업무용 보고서 톤으로 작성해 주세요. (이모지 절대 금지)
+당신은 {cat['name']} 분야 전문 데스크입니다. 수집된 뉴스 {count}개를 바탕으로 객관적인 업무용 보고서 톤으로 작성해 주세요. (출력 시 모든 이모지 사용 절대 금지)
 
 반드시 아래의 두 구분자(===SUMMARY=== 와 ===DETAILS===)를 사용하여 답변을 두 영역으로 엄격히 분리하세요.
 
@@ -124,6 +121,8 @@ if st.button("보고서 생성 실행", type="primary"):
 
 ===DETAILS===
 - 수집된 뉴스 중 동일한 사건이나 중복된 기사는 완벽히 하나로 통합하세요.
+- 단순 기관 홍보성 단신, 지자체 행사, 개인 미담 등 파급력이 낮은 소식은 제외하세요.
+- 언론사 보도 집중도가 높고 사회·경제·국제적 파급력이 큰 핵심 이슈를 **최대 5~7개만 엄선**하여 나열하세요. (절대 7개를 초과하지 마세요)
 - 각 고유 이슈마다 다음 형식을 반드시 지켜 나열하세요:
   * [이슈 타이틀]
   * (해당 이슈에 대한 1~2줄 내외의 핵심 요약)
