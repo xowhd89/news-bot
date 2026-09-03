@@ -1,5 +1,5 @@
 # ==========================================
-# 일간 종합 동향 보고서 v2.6 (Streamlit App)
+# 일간 종합 동향 보고서 v2.6.1 (Streamlit App - 모바일 표 수정본)
 # ==========================================
 
 import pandas as pd
@@ -18,7 +18,7 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-st.set_page_config(page_title="일간 종합 동향 보고서 v2.6", layout="wide")
+st.set_page_config(page_title="일간 종합 동향 보고서", layout="wide")
 st.title("일간 종합 동향 보고서")
 st.write("각 분야별 24시간 이내 최신 동향을 통합 요약 및 중요도 중심 상세 분석한 보고서입니다.")
 
@@ -80,14 +80,18 @@ if st.button("보고서 생성 실행", type="primary"):
             df_kbo = tables[0][['순위', '팀명', '승', '무', '패', '승률', '게임차']]
             
             html_table = df_kbo.to_html(index=False, classes="kbo-table", border=0)
-            st.markdown(f"""
-                <style>
-                .kbo-table {{ width: 100%; text-align: center; font-size: 12px; border-collapse: collapse; }}
-                .kbo-table th {{ text-align: center; background-color: #262730; color: white; padding: 6px; border-bottom: 1px solid #444; }}
-                .kbo-table td {{ padding: 6px; border-bottom: 1px solid #333; }}
-                </style>
-                {html_table}
-            """, unsafe_allow_html=True)
+            
+            # 스트림릿 버그 방지를 위해 들여쓰기를 완전히 없앤 HTML 묶음
+            custom_html = f"""
+<style>
+.kbo-table {{ width: 100%; text-align: center; font-size: 12px; border-collapse: collapse; }}
+.kbo-table th {{ text-align: center; background-color: #262730; color: white; padding: 4px; border-bottom: 1px solid #444; }}
+.kbo-table td {{ padding: 4px; border-bottom: 1px solid #333; letter-spacing: -0.5px; }}
+</style>
+{html_table}
+"""
+            st.markdown(custom_html, unsafe_allow_html=True)
+            
         except Exception:
             st.error("순위표 데이터를 가져오는 데 실패했습니다.")
 
