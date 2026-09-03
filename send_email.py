@@ -11,9 +11,6 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# ==========================================
-# 0. 🔍 깃허브 시크릿 연결 상태 스캐너 (디버깅용)
-# ==========================================
 print("--- 🔍 깃허브 시크릿 연결 상태 검사 ---")
 keys_to_check = ["NCP_CLIENT_ID", "NCP_CLIENT_SECRET", "GEMINI_API_KEY", "GMAIL_ADDRESS", "GMAIL_PASSWORD"]
 error_found = False
@@ -34,9 +31,6 @@ else:
     print("🎉 모든 키가 완벽하게 연결되었습니다! 보고서 작성을 시작합니다.")
     print("-----------------------------------------\n")
 
-# ==========================================
-# 1. 환경 변수 및 API 세팅
-# ==========================================
 NCP_CLIENT_ID = os.environ.get("NCP_CLIENT_ID")
 NCP_CLIENT_SECRET = os.environ.get("NCP_CLIENT_SECRET")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -45,9 +39,6 @@ GMAIL_PASSWORD = os.environ.get("GMAIL_PASSWORD")
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# ==========================================
-# 2. 공통 도우미 함수
-# ==========================================
 def fetch_news_items(search_keyword, display_count=100):
     search_word = urllib.parse.quote(search_keyword)
     api_url = f"https://naverapihub.apigw.ntruss.com/search/v1/news?query={search_word}&display={display_count}&sort=date"
@@ -89,9 +80,6 @@ def get_best_model():
     ]
     return sorted(valid_models, reverse=True)[0] if valid_models else 'models/gemini-3.6-flash'
 
-# ==========================================
-# 3. 이메일 본문(HTML) 조립 시작
-# ==========================================
 today_str = (datetime.datetime.now() + datetime.timedelta(hours=9)).strftime("%Y년 %m월 %d일")
 
 html_body = f"""
@@ -101,12 +89,14 @@ html_body = f"""
     body {{ font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; color: #333; }}
     h1 {{ color: #1a252f; text-align: center; border-bottom: 2px solid #2c3e50; padding-bottom: 10px; }}
     h2 {{ color: #2c3e50; margin-top: 30px; border-bottom: 1px solid #eee; padding-bottom: 5px; }}
-    h3 {{ color: #34495e; }}
+    h3 {{ color: #34495e; margin-bottom: 10px; }}
     .kbo-table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; font-size: 14px; }}
     .kbo-table th, .kbo-table td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
     .kbo-table th {{ background-color: #f8f9fa; font-weight: bold; }}
     a {{ color: #2980b9; text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
+    ul {{ margin-top: 5px; }}
+    li {{ margin-bottom: 5px; }}
 </style>
 </head>
 <body>
@@ -114,7 +104,6 @@ html_body = f"""
 <p style="text-align: center; color: #7f8c8d;">기준일: {today_str}</p>
 """
 
-# [섹션 1] KBO 순위표
 html_body += "<h2>1. 오늘의 KBO 구단 순위</h2>"
 try:
     url = "https://www.koreabaseball.com/Record/TeamRank/TeamRankDaily.aspx"
@@ -125,7 +114,6 @@ try:
 except Exception:
     html_body += "<p>순위표 데이터를 가져오는 데 실패했습니다.</p>"
 
-# [섹션 2 & 3 데이터를 담을 변수]
 summary_html = "<h2>2. 분야별 종합 뉴스 요약</h2>"
 detail_html = "<h2>3. 분야별 주요 뉴스 상세 (중복 제거)</h2>"
 
@@ -167,7 +155,6 @@ for cat in categories:
     news_text, count = format_news_text(all_items, max_count=70)
 
     if count > 0:
-        # v2.5 업데이트: 요약 분량 제한 해제 및 모든 개별 뉴스 내용 포함 지시
         prompt = f"""
 당신은 {cat['name']} 분야 전문 데스크입니다. 수집된 뉴스 {count}개를 바탕으로 객관적인 보고서 톤으로 작성해 주세요. (이모지 절대 금지)
 
@@ -176,8 +163,8 @@ for cat in categories:
 
 ===SUMMARY===
 - 특정 이슈에 편중되지 않게 객관적으로 작성하세요.
-- 분량 제한을 해제합니다. 아래 ===DETAILS=== 에 선정된 **모든 개별 뉴스의 핵심 내용이 하나도 빠짐없이** <p> 태그 안의 종합 요약 문단에 포함되어야 합니다.
-- 선정된 각 이슈가 서로 유기적으로 연결된 하나의 풍성하고 완성된 브리핑 글이 되도록 작성해 주세요.
+- 아래 ===DETAILS=== 에 선정된 모든 뉴스의 맥락을 다 담아내되, 길고 지루한 줄글(산문)이 되지 않도록 **3~4개의 핵심 테마로 묶어 개조식(Bullet point)으로 요약**하세요.
+- 반드시 <ul>과 <li> 태그를 사용하여, 핵심만 명료하고 임팩트 있게 짚어주는 임원용 브리핑 스타일로 작성하세요.
 
 ===DETAILS===
 - 동일한 사건이나 중복된 기사는 하나로 통합하세요. 단편적인 지역 소식은 버리세요.
@@ -212,9 +199,6 @@ html_body += summary_html
 html_body += detail_html
 html_body += "</body></html>"
 
-# ==========================================
-# 4. 이메일 전송 로직
-# ==========================================
 try:
     msg = MIMEMultipart('alternative')
     msg['Subject'] = f"[일간 브리핑] 종합 동향 보고서 ({today_str})"
