@@ -1,5 +1,5 @@
 # ==========================================
-# 일간 종합 동향 보고서 v2.4 (Streamlit App)
+# 일간 종합 동향 보고서 v2.5 (Streamlit App)
 # ==========================================
 
 import pandas as pd
@@ -18,7 +18,7 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-st.set_page_config(page_title="일간 종합 동향 보고서 v2.4", layout="wide")
+st.set_page_config(page_title="일간 종합 동향 보고서 v2.5", layout="wide")
 st.title("일간 종합 동향 보고서")
 st.write("각 분야별 24시간 이내 최신 동향을 통합 요약 및 중요도 중심 상세 분석한 보고서입니다.")
 
@@ -77,7 +77,19 @@ if st.button("보고서 생성 실행", type="primary"):
             url = "https://www.koreabaseball.com/Record/TeamRank/TeamRankDaily.aspx"
             storage_options = {'User-Agent': 'Mozilla/5.0'}
             tables = pd.read_html(url, storage_options=storage_options)
-            st.dataframe(tables[0][['순위', '팀명', '승', '무', '패', '승률', '게임차']], use_container_width=True, hide_index=True)
+            df_kbo = tables[0][['순위', '팀명', '승', '무', '패', '승률', '게임차']]
+            
+            # 모바일 화면 짤림 방지를 위한 반응형 HTML 테이블 렌더링
+            html_table = df_kbo.to_html(index=False, classes="kbo-table", border=0)
+            st.markdown(f"""
+                <style>
+                .kbo-table {{ width: 100%; text-align: center; font-size: 12px; border-collapse: collapse; }}
+                .kbo-table th {{ text-align: center; background-color: #262730; color: white; padding: 6px; border-bottom: 1px solid #444; }}
+                .kbo-table td {{ padding: 6px; border-bottom: 1px solid #333; }}
+                </style>
+                {html_table}
+            """, unsafe_allow_html=True)
+            
         except Exception:
             st.error("순위표 데이터를 가져오는 데 실패했습니다.")
 
@@ -120,7 +132,7 @@ if st.button("보고서 생성 실행", type="primary"):
             "name": "사회 및 글로벌 동향", 
             "keywords": ["외신", "국제 정세", "특파원", "해외 재난"], 
             "context": "국내 주요 사회 현안 및 해외 주요 재난, 국제 정세 동향",
-            "detail_rules": "- 국내 정치권 공방이나 주식/기업 관련 경제 뉴스는 철저히 배제하세요. (중복 방지)\n- [글로벌 주요 쟁점 및 정세]: 중요도 순으로 최대 5개 엄선\n- [해외 재난 및 사건사고]: 네팔 등 해외 재난 위주로 최대 5개 엄선"
+            "detail_rules": "- 국내 정치권 공방이나 주식/기업 관련 경제 뉴스는 철저히 배제하세요. (중복 방지)\n- [글로벌 주요 쟁점 및 정세]: 중요도 순으로 최대 5개 엄선\n- [해외 재난 및 사건사고]: 해외 재난 위주로 최대 5개 엄선"
         }
     ]
 
@@ -142,7 +154,8 @@ if st.button("보고서 생성 실행", type="primary"):
 
 ===SUMMARY===
 - 특정 이슈에 편중되지 않게 객관적으로 작성하세요.
-- {cat['context']}을 5줄 내외의 분량으로 압축하여 전체 흐름을 요약해 주세요. 
+- 분량 제한을 해제합니다. 아래 ===DETAILS=== 에 선정된 **모든 개별 뉴스의 핵심 내용이 하나도 빠짐없이** 종합 요약 문단에 포함되어야 합니다.
+- 선정된 각 이슈가 서로 유기적으로 연결된 하나의 풍성하고 완성된 브리핑 글이 되도록 작성해 주세요.
 
 ===DETAILS===
 - 수집된 뉴스 중 동일한 사건이나 중복된 기사는 하나로 통합하세요.
